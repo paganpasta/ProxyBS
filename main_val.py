@@ -93,9 +93,8 @@ def main():
     cudnn.benchmark = True
     args.distributed = False
 
-    args.save_path = args.save_path + args.data + '_' + args.model + '_' + args.method
-    if not os.path.exists(args.save_path):
-        os.makedirs(args.save_path, exist_ok=False)
+    args.save_path = os.path.join(args.save_path, f'{args.data}_{args.model}_{args.method}_{args.alpha}')
+    os.makedirs(args.save_path, exist_ok=False)
 
     args.use_val = 'val' == args.method
     # wandb
@@ -180,12 +179,11 @@ def main():
                                            train_logger,
                                            args)
 
+        print(f'Epoch: {epoch}', 100 * '#')
         for i in range(args.classnumber):
             print('CLS', i, cls_scores.val_preds[i])
-
+        print(50*'*')
         # calc measure
-        print(100 * '#')
-        print(epoch)
         scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
         wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
 
