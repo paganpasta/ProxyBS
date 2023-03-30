@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.optim.lr_scheduler import MultiStepLR
+import torch.nn.functional as F
 import argparse
 import os
 import csv
@@ -18,10 +19,9 @@ from model import efficientnet
 from model import wrn
 from model import convmixer
 from utils import data as dataset
-from utils import crl_utils
 from utils import metrics
 from utils import utils
-import train_base
+import train_val
 
 import wandb
 
@@ -30,7 +30,8 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
 
 def csv_writter(path, dic, start):
-    if os.path.isdir(path) == False: os.makedirs(path)
+    if not os.path.isdir(path):
+        os.makedirs(path)
     os.chdir(path)
     # Write dic
     if start == 1:
@@ -56,33 +57,52 @@ parser.add_argument('--plot', default=20, type=int, help='')
 parser.add_argument('--data', default='cifar10', type=str, help='Dataset name to use [cifar10, cifar100]')
 parser.add_argument('--model', default='res110', type=str,
                     help='Models name to use [res110, dense, wrn, cmixer, efficientnet, mobilenet, vgg]')
-parser.add_argument('--method', default='Baseline', type=str, help='[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS]')
+parser.add_argument('--method', default='val', type=str, help='[val]')
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
-parser.add_argument('--cwd_weight', default=0.1, type=float, help='Trianing time tempscaling')
 parser.add_argument('--save_path', default='./output/', type=str, help='Savefiles directory')
-parser.add_argument('--rank_weight', default=1.0, type=float, help='Rank loss weight')
 parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
-parser.add_argument('--scale', default='1.0', type=float, help='Scaling the loss')
+parser.add_argument('--alpha', default='0.1', type=float, help='Contribution of the val smoothing loss')
+parser.add_argument('--gamma', default='0.1', type=float, help='Weight of the previous val predictions')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 
 args = parser.parse_args()
 
 
+class ValScores(nn.Module):
+    def __init__(self, num_classes, gamma):
+        super().__init__()
+        self.val_preds = torch.zeros(num_classes, num_classes).requires_grad_(False).cuda()
+        self.gamma = gamma
+
+    def update(self, preds, labels):
+        # labels = [b]
+        # preds = [b x C]
+        for c in range(preds.shape[1]):
+            mask = torch.where(labels == c, 1.0, 0.0)
+            num_instances = mask.sum()
+            if num_instances > 0:
+                self.val_preds[c] = (1 - self.gamma) * ((mask.unsqueeze(1) * preds).sum(dim=0) / num_instances) + \
+                                self.gamma * self.val_preds[c]
+
+    def get(self, labels):
+        return self.val_preds[labels]
+
 def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     cudnn.benchmark = True
     args.distributed = False
 
-    args.save_path = args.save_path + args.data + '_' + args.model + '_' + args.method + '_' + str(args.scale)
+    args.save_path = args.save_path + args.data + '_' + args.model + '_' + args.method
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path, exist_ok=False)
 
+    args.use_val = 'val' == args.method
     # wandb
     wandb_logger = utils.init_wandb(args)
 
     train_loader, valid_loader, test_loader, \
-        test_onehot, test_label = dataset.get_loader(args.data, args.data_path, args.batch_size)
+        test_onehot, test_label = dataset.get_loader(args.data, args.data_path, args.batch_size, args)
 
     if args.data == 'cifar100':
         num_class = 100
@@ -137,20 +157,31 @@ def main():
     train_logger = utils.Logger(os.path.join(args.save_path, 'train.log'))
     result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
 
-    correctness_history = crl_utils.History(len(train_loader.dataset))
-    ranking_criterion = nn.MarginRankingLoss(margin=0.0).cuda()
+    #initialise val scores
+    cls_scores = ValScores(num_classes=args.classnumber, gamma=args.gamma)
+    with torch.no_grad():
+        model.eval()
+        print('Initialising the val scores before training')
+        for i, (input, target, idx) in enumerate(valid_loader):
+            output = F.softmax(model(input.cuda()), dim=1)
+            cls_scores.update(output.detach(), target.long().cuda())
+        for i in range(args.classnumber):
+            print('CLS', i, cls_scores.val_preds[i])
 
     # start Train
     for epoch in range(1, args.epochs + 1):
-        training_metrics = train_base.train(train_loader,
-                                            model,
-                                            cls_criterion,
-                                            ranking_criterion,
-                                            optimizer,
-                                            epoch,
-                                            correctness_history,
-                                            train_logger,
-                                            args)
+        training_metrics = train_val.train(train_loader,
+                                           valid_loader,
+                                           cls_scores,
+                                           model,
+                                           cls_criterion,
+                                           optimizer,
+                                           epoch,
+                                           train_logger,
+                                           args)
+
+        for i in range(args.classnumber):
+            print('CLS', i, cls_scores.val_preds[i])
 
         # calc measure
         print(100 * '#')
@@ -163,8 +194,7 @@ def main():
             'epoch': epoch,
             'scores': scores,
         }
-        torch.save(ckpt,
-                   os.path.join(args.save_path, 'model.pth'))
+        torch.save(ckpt, os.path.join(args.save_path, 'model.pth'))
 
         # result write
         result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
@@ -174,6 +204,7 @@ def main():
         if scheduler is not None:
             scheduler.step()
     wandb.finish()
+
 
 if __name__ == "__main__":
     main()

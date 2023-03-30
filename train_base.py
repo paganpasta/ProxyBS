@@ -56,6 +56,27 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 
+class BSLoss(nn.Module):
+    def __init__(self, **kwargs):
+        super(BSLoss, self).__init__()
+
+    def forward(self, inputs, targets):
+        inputs = torch.softmax(inputs, dim=1)
+        targets = torch.zeros_like(inputs).scatter(1, targets.unsqueeze(1), 1.0)
+        return torch.pow(inputs-targets, 2).sum(dim=1).mean()
+criterion_bs = BSLoss()
+
+
+class ProxyBSLoss(nn.Module):
+    def __init__(self, **kwargs):
+        super(ProxyBSLoss, self).__init__()
+
+    def forward(self, inputs, targets):
+        inputs = torch.gather(torch.softmax(inputs, dim=1), dim=1, index=targets.unsqueeze(1))
+        return -inputs.mean()
+criterion_pbs = ProxyBSLoss()
+
+
 class focal_loss(nn.Module):
     def __init__(self, class_num=10, alpha=None, gamma=2.0, size_average=True):
         super(focal_loss, self).__init__()
@@ -114,6 +135,14 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
             loss = criterion(output, target)
+        elif args.method == 'BS':
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = args.scale*criterion_bs(output, target)
+        elif args.method == 'PBS':
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = args.scale * criterion_pbs(output, target)
         elif args.method == 'L1':
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
@@ -164,16 +193,10 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
 
         batch_time.update(time.time() - end)
         end = time.time()
-        # if i % args.print_freq == 0:
-        #     print('Epoch: [{0}][{1}/{2}]\t'
-        #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-        #           'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-        #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-        #           'Prec {top1.val:.2f}% ({top1.avg:.2f}%)'.format(
-        #            epoch, i, len(loader), batch_time=batch_time,
-        #            data_time=data_time, loss=total_losses,top1=top1))
+
         if args.method == 'CRL':
             history.correctness_update(idx, correct, output)
     if args.method == 'CRL':
         history.max_correctness_update(epoch)
     logger.write([epoch, total_losses.avg, top1.avg])
+    return {'loss': total_losses.avg, 'acc': top1.avg}

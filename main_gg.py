@@ -18,10 +18,9 @@ from model import efficientnet
 from model import wrn
 from model import convmixer
 from utils import data as dataset
-from utils import crl_utils
 from utils import metrics
 from utils import utils
-import train_base
+import train_gg
 
 import wandb
 
@@ -137,20 +136,17 @@ def main():
     train_logger = utils.Logger(os.path.join(args.save_path, 'train.log'))
     result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
 
-    correctness_history = crl_utils.History(len(train_loader.dataset))
-    ranking_criterion = nn.MarginRankingLoss(margin=0.0).cuda()
-
     # start Train
+    previous_gradients = None
     for epoch in range(1, args.epochs + 1):
-        training_metrics = train_base.train(train_loader,
-                                            model,
-                                            cls_criterion,
-                                            ranking_criterion,
-                                            optimizer,
-                                            epoch,
-                                            correctness_history,
-                                            train_logger,
-                                            args)
+        training_metrics, previous_gradients = train_gg.train(train_loader,
+                                                              model,
+                                                              cls_criterion,
+                                                              optimizer,
+                                                              epoch,
+                                                              train_logger,
+                                                              previous_gradients,
+                                                              )
 
         # calc measure
         print(100 * '#')
@@ -174,6 +170,7 @@ def main():
         if scheduler is not None:
             scheduler.step()
     wandb.finish()
+
 
 if __name__ == "__main__":
     main()

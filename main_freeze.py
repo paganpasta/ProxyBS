@@ -18,10 +18,9 @@ from model import efficientnet
 from model import wrn
 from model import convmixer
 from utils import data as dataset
-from utils import crl_utils
 from utils import metrics
 from utils import utils
-import train_base
+import train_freeze
 
 import wandb
 
@@ -62,7 +61,7 @@ parser.add_argument('--cwd_weight', default=0.1, type=float, help='Trianing time
 parser.add_argument('--save_path', default='./output/', type=str, help='Savefiles directory')
 parser.add_argument('--rank_weight', default=1.0, type=float, help='Rank loss weight')
 parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
-parser.add_argument('--scale', default='1.0', type=float, help='Scaling the loss')
+parser.add_argument('--scale', default='0.1', type=float, help='Scaling the loss')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 
@@ -137,18 +136,13 @@ def main():
     train_logger = utils.Logger(os.path.join(args.save_path, 'train.log'))
     result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
 
-    correctness_history = crl_utils.History(len(train_loader.dataset))
-    ranking_criterion = nn.MarginRankingLoss(margin=0.0).cuda()
-
     # start Train
     for epoch in range(1, args.epochs + 1):
-        training_metrics = train_base.train(train_loader,
+        training_metrics = train_freeze.train(train_loader,
                                             model,
                                             cls_criterion,
-                                            ranking_criterion,
                                             optimizer,
                                             epoch,
-                                            correctness_history,
                                             train_logger,
                                             args)
 
@@ -163,8 +157,7 @@ def main():
             'epoch': epoch,
             'scores': scores,
         }
-        torch.save(ckpt,
-                   os.path.join(args.save_path, 'model.pth'))
+        torch.save(ckpt, os.path.join(args.save_path, 'model.pth'))
 
         # result write
         result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],

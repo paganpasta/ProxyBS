@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import sys
+
 sys.path.append('../')
 import torchvision as tv
 from PIL import Image
@@ -23,8 +24,8 @@ class PairBatchSampler(Sampler):
         random.shuffle(indices)
         for k in range(len(self)):
             if self.num_iterations is None:
-                offset = k*self.batch_size
-                batch_indices = indices[offset:offset+self.batch_size]
+                offset = k * self.batch_size
+                batch_indices = indices[offset:offset + self.batch_size]
             else:
                 batch_indices = random.sample(range(len(self.dataset)),
                                               self.batch_size)
@@ -39,7 +40,7 @@ class PairBatchSampler(Sampler):
     def __len__(self):
         if self.num_iterations is None:
             len_train = int(np.floor(0.9 * len(self.dataset)))
-            return (len_train+self.batch_size-1) // self.batch_size
+            return (len_train + self.batch_size - 1) // self.batch_size
         else:
             return self.num_iterations
 
@@ -56,7 +57,7 @@ class DatasetWrapper(Dataset):
         for i in range(len(self)):
             y = self.base_dataset.targets[self.indices[i]]
             self.classwise_indices[y].append(i)
-        self.num_classes = max(self.classwise_indices.keys())+1
+        self.num_classes = max(self.classwise_indices.keys()) + 1
 
     def __getitem__(self, i):
         return self.base_dataset[self.indices[i]]
@@ -93,17 +94,17 @@ def get_loader(data, data_path, batch_size, args):
     # load datasets
     if data == 'cifar100':
         train_set = datasets.CIFAR100(root=os.path.join(data_path, 'cifar100_data'),
-                                      train=True,transform=train_transforms,download=True)
+                                      train=True, transform=train_transforms, download=True)
         eval_set = datasets.CIFAR100(root=os.path.join(data_path, 'cifar100_data'),
-                                     train=False,transform=test_transforms,download=False)
+                                     train=False, transform=test_transforms, download=False)
         test_set = datasets.CIFAR100(root=os.path.join(data_path, 'cifar100_data'),
                                      train=False, transform=test_transforms, download=False)
 
     elif data == 'cifar10':
         train_set = datasets.CIFAR10(root=os.path.join(data_path, 'cifar10_data'),
-                                     train=True,transform=train_transforms,download=True)
+                                     train=True, transform=train_transforms, download=True)
         eval_set = datasets.CIFAR10(root=os.path.join(data_path, 'cifar10_data'),
-                                    train=False,transform=test_transforms,download=False)
+                                    train=False, transform=test_transforms, download=False)
         test_set = datasets.CIFAR10(root=os.path.join(data_path, 'cifar10_data'),
                                     train=False, transform=test_transforms, download=False)
 
@@ -125,19 +126,19 @@ def get_loader(data, data_path, batch_size, args):
     eval_set.targets = Y_valid
 
     method = None
-    train_data = Custom_Dataset(train_set.data,train_set.targets,'cifar', train_transforms, method=method)
-    eval_data = Custom_Dataset(eval_set.data, eval_set.targets,'cifar', test_transforms)
+    train_data = Custom_Dataset(train_set.data, train_set.targets, 'cifar', train_transforms, method=method)
+    eval_data = Custom_Dataset(eval_set.data, eval_set.targets, 'cifar', test_transforms)
     test_data = Custom_Dataset(test_set.data, test_set.targets, 'cifar', test_transforms)
     test_onehot = one_hot_encoding(test_set.targets)
     test_label = test_set.targets
 
-    train_loader = DataLoader(train_data,batch_size=batch_size,shuffle=True,num_workers=4)
-    valid_loader = DataLoader(eval_data, batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_data,batch_size=batch_size,shuffle=False,num_workers=4)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4)
+    valid_loader = DataLoader(eval_data, batch_size=batch_size, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4)
 
     print("-------------------Make loader-------------------")
-    print('Train Dataset :',len(train_loader.dataset), 'Valid Dataset :',len(valid_loader.dataset),
-          '   Test Dataset :',len(test_loader.dataset))
+    print('Train Dataset :', len(train_loader.dataset), 'Valid Dataset :', len(valid_loader.dataset),
+          '   Test Dataset :', len(test_loader.dataset))
     return train_loader, valid_loader, test_loader, test_onehot, test_label
 
 
@@ -153,14 +154,11 @@ class Custom_Dataset(Dataset):
         return len(self.x_data)
 
     def __getitem__(self, idx):
-        if self.data == 'cifar':
-            img = Image.fromarray(self.x_data[idx])
-        if self.method == None:
-            x = self.transform(img)
-        else:
-            x = img
-        return x, self.y_data[idx], idx
+        img = Image.fromarray(self.x_data[idx])
+        x = self.transform(img)
+        y = self.y_data[idx]
 
+        return x, y, idx
 
 def one_hot_encoding(label):
     print("one_hot_encoding process")
@@ -169,4 +167,3 @@ def one_hot_encoding(label):
     one_hot = np.array(list(map(class_dict.get, label)))
 
     return one_hot
-

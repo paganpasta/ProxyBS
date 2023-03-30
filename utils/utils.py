@@ -1,4 +1,38 @@
 from collections import Iterable
+import wandb
+import os
+import torch
+
+
+def init_wandb(args):
+    is_resume = False
+    if os.path.exists(os.path.join(args.save_path, 'run.id')):
+        is_resume = "must",
+        run_id = open(f"{args.save_path}/run.id", 'r').read()
+    else:
+        os.makedirs(args.save_path, exist_ok=True)
+        run_id = wandb.util.generate_id()
+
+    wandb_logger = None
+    if args.distributed and torch.distributed.get_rank() == 0:
+        wandb.login(key=os.getenv('KEY'))
+        wandb_logger = wandb.init(
+            project=os.getenv('PROJECT'), entity=os.getenv('ENTITY'), resume=is_resume, id=run_id,
+            tags=[args.method, args.model, args.data], group=args.group, config=args,
+            dir=args.save_path
+        )
+        open(f'{args.save_path}/run.id', 'w').write(run_id)
+    elif not args.distributed:
+        wandb.login(key=os.getenv('KEY'))
+        wandb_logger = wandb.init(
+            project=os.getenv('PROJECT'), entity=os.getenv('ENTITY'), resume=is_resume, id=run_id,
+            tags=[args.method, args.model, args.data], group=args.group, config=args,
+            dir=args.save_path
+        )
+        open(f'{args.save_path}/run.id', 'w').write(run_id)
+
+    return wandb_logger
+
 
 class AverageMeter(object):
     def __init__(self):

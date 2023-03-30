@@ -15,7 +15,19 @@ def calc_metrics(args, loader, label, label_onehot, model, criterion):
     ece = calc_ece(softmax, label, bins=15)
     # brier, nll
     nll, brier = calc_nll_brier(softmax, logit, label, label_onehot)
-    return acc, auroc*100, aupr_success*100, aupr*100, fpr*100, tnr*100, aurc*1000, eaurc*1000, ece*100, nll*10, brier*100
+    return {
+        'acc': acc,
+        'auroc': auroc*100,
+        'aupr_s': aupr_success*100,
+        'aupr': aupr*100,
+        'fpr': fpr*100,
+        'tnr': tnr*100,
+        'aurc': aurc*1000,
+        'eaurc': eaurc*1000,
+        'ece': ece*100,
+        'nll': nll*10,
+        'bs': brier*100
+    }
 
 # AURC, EAURC
 def calc_aurc_eaurc(softmax, correct):
@@ -60,7 +72,7 @@ def calc_ece(softmax, label, bins=15):
     bin_lowers = bin_boundaries[:-1]
     bin_uppers = bin_boundaries[1:]
 
-    softmax = torch.tensor(softmax)
+    softmax = torch.tensor(np.array(softmax))
     labels = torch.tensor(label)
 
     softmax_max, predictions = torch.max(softmax, 1)
@@ -86,7 +98,7 @@ def calc_ece(softmax, label, bins=15):
 def calc_nll_brier(softmax, logit, label, label_onehot):
     brier_score = np.mean(np.sum((softmax - label_onehot) ** 2, axis=1))
 
-    logit = torch.tensor(logit, dtype=torch.float)
+    logit = torch.tensor(np.array(logit), dtype=torch.float)
     label = torch.tensor(label, dtype=torch.int)
     logsoftmax = torch.nn.LogSoftmax(dim=1)
 
