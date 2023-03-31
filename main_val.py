@@ -178,29 +178,31 @@ def main():
                                            epoch,
                                            train_logger,
                                            args)
+        if epoch % 10 == 1:
+            print(f'Epoch: {epoch}', 100 * '#')
+            # calc measure
+            scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
+            wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
 
-        print(f'Epoch: {epoch}', 100 * '#')
-        for i in range(args.classnumber):
-            print('CLS', i, cls_scores.val_preds[i])
-        print(50*'*')
-        # calc measure
-        scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
-        wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
+            ckpt = {
+                'state_dict': model.state_dict(),
+                'epoch': epoch,
+                'scores': scores,
+            }
+            torch.save(ckpt, os.path.join(args.save_path, 'model.pth'))
 
-        ckpt = {
-            'state_dict': model.state_dict(),
-            'epoch': epoch,
-            'scores': scores,
-        }
-        torch.save(ckpt, os.path.join(args.save_path, 'model.pth'))
-
-        # result write
-        result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
+            # result write
+            result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
                              scores['aupr'], scores['fpr'], scores['tnr'],
                              scores['aurc'], scores['eaurc'], scores['ece'],
                              scores['nll'], scores['bs']])
+        else:
+            wandb_logger.log({'train': training_metrics}, step=epoch)
+        
         if scheduler is not None:
             scheduler.step()
+    
+    torch.save(model.state_dict(), os.path.join(args.save_path, 'last.pth'))
     wandb.finish()
 
 
