@@ -21,6 +21,7 @@ from model import convmixer
 from utils import data as dataset
 from utils import metrics
 from utils import utils
+from utils import val_utils
 import train_val
 
 import wandb
@@ -68,25 +69,6 @@ parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', he
 
 args = parser.parse_args()
 
-
-class ValScores(nn.Module):
-    def __init__(self, num_classes, gamma):
-        super().__init__()
-        self.val_preds = torch.zeros(num_classes, num_classes).requires_grad_(False).cuda()
-        self.gamma = gamma
-
-    def update(self, preds, labels):
-        # labels = [b]
-        # preds = [b x C]
-        for c in range(preds.shape[1]):
-            mask = torch.where(labels == c, 1.0, 0.0)
-            num_instances = mask.sum()
-            if num_instances > 0:
-                self.val_preds[c] = (1 - self.gamma) * ((mask.unsqueeze(1) * preds).sum(dim=0) / num_instances) + \
-                                self.gamma * self.val_preds[c]
-
-    def get(self, labels):
-        return self.val_preds[labels]
 
 def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
@@ -157,15 +139,7 @@ def main():
     result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
 
     #initialise val scores
-    cls_scores = ValScores(num_classes=args.classnumber, gamma=args.gamma)
-    with torch.no_grad():
-        model.eval()
-        print('Initialising the val scores before training')
-        for i, (input, target, idx) in enumerate(valid_loader):
-            output = F.softmax(model(input.cuda()), dim=1)
-            cls_scores.update(output.detach(), target.long().cuda())
-        for i in range(args.classnumber):
-            print('CLS', i, cls_scores.val_preds[i])
+    cls_scores = val_utils.get_val_scores(model, valid_loader, num_classes=args.classnumber, gamma=args.gamma)
 
     # start Train
     for epoch in range(1, args.epochs + 1):
