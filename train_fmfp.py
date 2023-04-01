@@ -65,13 +65,13 @@ def train_val(loader, val_loader, cls_scores, model, criterion, optimizer, epoch
         cls_loss = criterion(output, target)
         val_targets = cls_scores.get(target)
         val_loss = criterion_val(output, val_targets)
-        loss = cls_loss + val_loss * args.alpha
+        loss = cls_loss + val_loss * args.val_weight
         optimizer.zero_grad()
         loss.backward()
-        if args.method in ['sam', 'fmfp', 'fmfp_val', 'sam_val']:
+        if 'sam' in args.method or 'fmfp' in args.method:
             optimizer.first_step(zero_grad=True)
             output_again = model(input)
-            loss_again = criterion(output_again, target) + args.val_weight * criterion_val(output, val_targets)
+            loss_again = criterion(output_again, target) + args.val_weight * criterion_val(output_again, val_targets)
             loss_again.backward()
             optimizer.second_step(zero_grad=True)
         else:

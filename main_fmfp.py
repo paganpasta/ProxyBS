@@ -55,10 +55,10 @@ parser.add_argument('--model', default='wrn28', type=str,
                     help='Models name to use [res110, dense, wrn28, cmixer, efficientnet, mobilenet, vgg]')
 parser.add_argument('--method', default='fmfp', type=str, help='val_+[sam, swa, fmfp]')
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
-parser.add_argument('--save_path', default='./output_flat/', type=str, help='Savefiles directory')
+parser.add_argument('--save_path', default='./output/flat/', type=str, help='Savefiles directory')
 parser.add_argument('--val_weight', default=0.25, type=float, help='Val loss weight')
 parser.add_argument('--gamma', default=0.1, type=float, help='CLS SCORE DECAY')
-parser.add_argument('--gpu', default='1', type=str, help='GPU id to use')
+parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
 args = parser.parse_args()
@@ -69,8 +69,8 @@ def main():
     cudnn.benchmark = True
     args.distributed = False
 
-    save_path = args.save_path + args.data + '_' + args.model + '_' + args.method
-    os.makedirs(save_path, exist_ok=False)
+    args.save_path = os.path.join(args.save_path, f'{args.data}_{args.model}_{args.method}_{args.val_weight}')
+    os.makedirs(args.save_path, exist_ok=True)
 
     wandb_logger = utils.init_wandb(args)
 
@@ -85,6 +85,8 @@ def main():
         "num_classes": num_class,
     }
     args.num_class = num_class
+    
+    print(torch.cuda.is_available(), torch.cuda.device_count())
 
     if args.model == 'resnet18':
         model = resnet18.ResNet18(**model_dict).cuda()
@@ -108,8 +110,8 @@ def main():
     wandb.watch(model, log='all', log_freq=500)
     cls_criterion = nn.CrossEntropyLoss().cuda()
     # make logger
-    train_logger = utils.Logger(os.path.join(save_path, 'train.log'))
-    result_logger = utils.Logger(os.path.join(save_path, 'result.log'))
+    train_logger = utils.Logger(os.path.join(args.save_path, 'train.log'))
+    result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
 
     base_lr = 0.1  # Initial learning rate
     lr_strat = [80, 130, 170]
@@ -184,7 +186,7 @@ def main():
                 scheduler.step()
 
         # calc measure
-        if epoch % 10 == 1 or epoch == args.epoch:
+        if epoch % 10 == 1 or epoch == args.epochs:
             print(epoch, 100 * '#')
             scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
             wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
@@ -202,12 +204,12 @@ def main():
                                  scores['aurc'], scores['eaurc'], scores['ece'],
                                  scores['nll'], scores['bs']])
 
-    torch.save(model.state_dict(), os.path.join(save_path, 'last.pth'))
+    torch.save(model.state_dict(), os.path.join(args.save_path, 'last.pth'))
     # Update bn statistics for the swa_model at the end
     if 'swa' in args.method or 'fmfp' in args.method:
         torch.optim.swa_utils.update_bn(train_loader, swa_model.cpu())
         model = swa_model.cuda()
-    torch.save(model.state_dict(), os.path.join(save_path, 'avg_model.pth'))
+    torch.save(model.state_dict(), os.path.join(args.save_path, 'avg_model.pth'))
 
     acc, auroc, aupr_success, aupr, fpr, tnr, aurc, eaurc, ece, nll, brier = metrics.calc_metrics(args, test_loader,
                                                                                                   test_label,

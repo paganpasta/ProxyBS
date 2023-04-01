@@ -46,3 +46,5 @@ def get_val_scores(model, valid_loader, num_classes, gamma):
             cls_scores.update(output.detach(), target.long().cuda())
         for i in range(num_classes):
             print('CLS', i, cls_scores.val_preds[i])
+
+    return cls_scores
