@@ -50,7 +50,6 @@ parser = argparse.ArgumentParser(description='Rethinking CC for FP')
 parser.add_argument('--epochs', default=201, type=int, help='Total number of epochs to run')
 parser.add_argument('--batch_size', default=128, type=int, help='Batch size for training')
 parser.add_argument('--plot', default=20, type=int, help='')
-parser.add_argument('--classnumber', default=10, type=int, help='class number for the dataset')
 parser.add_argument('--data', default='cifar10', type=str, help='Dataset name to use [cifar10, cifar100]')
 parser.add_argument('--model', default='wrn28', type=str,
                     help='Models name to use [res110, dense, wrn28, cmixer, efficientnet, mobilenet, vgg]')
@@ -58,6 +57,7 @@ parser.add_argument('--method', default='fmfp', type=str, help='val_+[sam, swa, 
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
 parser.add_argument('--save_path', default='./output_flat/', type=str, help='Savefiles directory')
 parser.add_argument('--val_weight', default=0.25, type=float, help='Val loss weight')
+parser.add_argument('--gamma', default=0.1, type=float, help='CLS SCORE DECAY')
 parser.add_argument('--gpu', default='1', type=str, help='GPU id to use')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
@@ -67,6 +67,7 @@ args = parser.parse_args()
 def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     cudnn.benchmark = True
+    args.distributed = False
 
     save_path = args.save_path + args.data + '_' + args.model + '_' + args.method
     os.makedirs(save_path, exist_ok=False)
@@ -83,6 +84,7 @@ def main():
     model_dict = {
         "num_classes": num_class,
     }
+    args.num_class = num_class
 
     if args.model == 'resnet18':
         model = resnet18.ResNet18(**model_dict).cuda()
@@ -149,7 +151,7 @@ def main():
         swa_scheduler = SWALR(optimizer, swa_lr=0.05)
 
     # initialise val scores
-    cls_scores = val_utils.get_val_scores(model, valid_loader, num_classes=args.classnumber, gamma=args.gamma)
+    cls_scores = val_utils.get_val_scores(model, valid_loader, num_classes=args.num_class, gamma=args.gamma)
 
     # start Train
     for epoch in range(1, args.epochs + 1):

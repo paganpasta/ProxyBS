@@ -1,7 +1,7 @@
 import utils.crl_utils
 from utils import utils
 import time
-from .train_val import ValSmoothing
+from utils.val_utils import ValSmoothing
 import torch
 import torch.nn.functional as F
 

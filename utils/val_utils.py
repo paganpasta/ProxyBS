@@ -3,6 +3,19 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 
+class ValSmoothing(nn.Module):
+    """NLL loss with val smoothing.
+    """
+
+    def __init__(self):
+        super(ValSmoothing, self).__init__()
+        self.kl_div = nn.KLDivLoss(reduction="batchmean")
+
+    def forward(self, xs, targets):
+        logprobs = F.log_softmax(xs, dim=-1)
+        return self.kl_div(logprobs, targets)
+
+
 class ValScores(nn.Module):
     def __init__(self, num_classes, gamma):
         super().__init__()
