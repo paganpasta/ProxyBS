@@ -54,7 +54,7 @@ parser.add_argument('--epochs', default=201, type=int, help='Total number of epo
 parser.add_argument('--batch_size', default=128, type=int, help='Batch size for training')
 parser.add_argument('--plot', default=20, type=int, help='')
 parser.add_argument('--data', default='cifar10', type=str, help='Dataset name to use [cifar10, cifar100]')
-parser.add_argument('--model', default='res110', type=str,
+parser.add_argument('--model', default='wrn28', type=str,
                     help='Models name to use [res110, dense, wrn, cmixer, efficientnet, mobilenet, vgg]')
 parser.add_argument('--method', default='Baseline', type=str, help='[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS]')
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
@@ -62,7 +62,6 @@ parser.add_argument('--cwd_weight', default=0.1, type=float, help='Trianing time
 parser.add_argument('--save_path', default='./output/', type=str, help='Savefiles directory')
 parser.add_argument('--rank_weight', default=1.0, type=float, help='Rank loss weight')
 parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
-parser.add_argument('--scale', default='1.0', type=float, help='Scaling the loss')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 
@@ -74,7 +73,7 @@ def main():
     cudnn.benchmark = True
     args.distributed = False
 
-    args.save_path = args.save_path + args.data + '_' + args.model + '_' + args.method + '_' + str(args.scale)
+    args.save_path = os.path.join(args.save_path, args.data + '_' + args.model + '_' + args.method)
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path, exist_ok=False)
 
@@ -152,27 +151,33 @@ def main():
                                             train_logger,
                                             args)
 
-        # calc measure
-        print(100 * '#')
-        print(epoch)
-        scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
-        wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
+        if epoch % 10 == 1:
+            # calc measure
+            print(100 * '#')
+            print(epoch)
+            scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
+            wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
 
-        ckpt = {
-            'state_dict': model.state_dict(),
-            'epoch': epoch,
-            'scores': scores,
-        }
-        torch.save(ckpt,
-                   os.path.join(args.save_path, 'model.pth'))
+            ckpt = {
+                'state_dict': model.state_dict(),
+                'epoch': epoch,
+                'scores': scores,
+            }
+            torch.save(ckpt,
+                       os.path.join(args.save_path, 'model.pth'))
 
-        # result write
-        result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
-                             scores['aupr'], scores['fpr'], scores['tnr'],
-                             scores['aurc'], scores['eaurc'], scores['ece'],
-                             scores['nll'], scores['bs']])
+            # result write
+            result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
+                                 scores['aupr'], scores['fpr'], scores['tnr'],
+                                 scores['aurc'], scores['eaurc'], scores['ece'],
+                                 scores['nll'], scores['bs']])
+        else:
+            wandb_logger.log({'train': training_metrics}, step=epoch)
+
         if scheduler is not None:
             scheduler.step()
+
+    torch.save(model.state_dict(), os.path.join(args.save_path, 'last.pth'))
     wandb.finish()
 
 if __name__ == "__main__":
