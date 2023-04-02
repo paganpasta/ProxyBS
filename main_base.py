@@ -81,7 +81,7 @@ def main():
     wandb_logger = utils.init_wandb(args)
 
     train_loader, valid_loader, test_loader, \
-        test_onehot, test_label = dataset.get_loader(args.data, args.data_path, args.batch_size)
+        test_onehot, test_label = dataset.get_loader(args.data, args.data_path, args.batch_size, args)
 
     if args.data == 'cifar100':
         num_class = 100
