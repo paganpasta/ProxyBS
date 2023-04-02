@@ -14,7 +14,7 @@ class ConfidencePenaltyLoss(nn.Module):
         super(ConfidencePenaltyLoss, self).__init__()
 
     def forward(self, x):
-        return (-x * F.log_softmax(x, dim=1)).sum(dim=1).mean()
+        return (-F.softmax(x, dim=1) * F.log_softmax(x, dim=1)).sum(dim=1).mean()
 
 
 criterion_erl = ConfidencePenaltyLoss()
