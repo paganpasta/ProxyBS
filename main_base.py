@@ -56,7 +56,7 @@ parser.add_argument('--plot', default=20, type=int, help='')
 parser.add_argument('--data', default='cifar10', type=str, help='Dataset name to use [cifar10, cifar100]')
 parser.add_argument('--model', default='wrn28', type=str,
                     help='Models name to use [res110, dense, wrn, cmixer, efficientnet, mobilenet, vgg]')
-parser.add_argument('--method', default='Baseline', type=str, help='[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS]')
+parser.add_argument('--method', default='Baseline', type=str, help='[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS, ERL]')
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
 parser.add_argument('--cwd_weight', default=0.1, type=float, help='Trianing time tempscaling')
 parser.add_argument('--save_path', default='./output/', type=str, help='Savefiles directory')
