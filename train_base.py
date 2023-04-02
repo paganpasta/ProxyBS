@@ -9,6 +9,17 @@ from torch.autograd import Variable
 import random
 
 
+class ConfidencePenaltyLoss(nn.Module):
+    def __init__(self):
+        super(ConfidencePenaltyLoss, self).__init__()
+
+    def forward(self, x):
+        return (-x * F.log_softmax(x, dim=1)).sum(dim=1).mean()
+
+
+criterion_erl = ConfidencePenaltyLoss()
+
+
 class KDLoss(nn.Module):
     def __init__(self, temp_factor):
         super(KDLoss, self).__init__()
@@ -16,10 +27,12 @@ class KDLoss(nn.Module):
         self.kl_div = nn.KLDivLoss(reduction="sum")
 
     def forward(self, input, target):
-        log_p = torch.log_softmax(input/self.temp_factor, dim=1)
-        q = torch.softmax(target/self.temp_factor, dim=1)
-        loss = self.kl_div(log_p, q)*(self.temp_factor**2)/input.size(0)
+        log_p = torch.log_softmax(input / self.temp_factor, dim=1)
+        q = torch.softmax(target / self.temp_factor, dim=1)
+        loss = self.kl_div(log_p, q) * (self.temp_factor ** 2) / input.size(0)
         return loss
+
+
 kdloss = KDLoss(2.0)
 
 
@@ -35,6 +48,8 @@ class LabelSmoothingCrossEntropy(nn.Module):
         smooth_loss = -logprobs.mean(dim=-1)
         loss = confidence * nll_loss + smoothing * smooth_loss
         return loss.mean()
+
+
 criterion_ls = LabelSmoothingCrossEntropy()
 
 
@@ -63,7 +78,9 @@ class BSLoss(nn.Module):
     def forward(self, inputs, targets):
         inputs = torch.softmax(inputs, dim=1)
         targets = torch.zeros_like(inputs).scatter(1, targets.unsqueeze(1), 1.0)
-        return torch.pow(inputs-targets, 2).sum(dim=1).mean()
+        return torch.pow(inputs - targets, 2).sum(dim=1).mean()
+
+
 criterion_bs = BSLoss()
 
 
@@ -74,6 +91,8 @@ class ProxyBSLoss(nn.Module):
     def forward(self, inputs, targets):
         inputs = torch.gather(torch.softmax(inputs, dim=1), dim=1, index=targets.unsqueeze(1))
         return -inputs.mean()
+
+
 criterion_pbs = ProxyBSLoss()
 
 
@@ -105,11 +124,11 @@ class focal_loss(nn.Module):
             self.alpha = self.alpha.cuda()
         alpha = self.alpha[ids.data.view(-1)]
 
-        probs = (P*class_mask).sum(1).view(-1,1)
+        probs = (P * class_mask).sum(1).view(-1, 1)
         probs = probs.clamp(min=0.0001, max=1.0)
         log_p = probs.log()
 
-        batch_loss = -alpha*(torch.pow((1-probs), self.gamma))*log_p
+        batch_loss = -alpha * (torch.pow((1 - probs), self.gamma)) * log_p
 
         if self.size_average:
             loss = batch_loss.mean()
@@ -138,15 +157,19 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
         elif args.method == 'BS':
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
-            loss = args.scale*criterion_bs(output, target)
+            loss = criterion_bs(output, target)
         elif args.method == 'PBS':
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
             loss = args.scale * criterion_pbs(output, target)
+        elif args.method == 'ERL':
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = criterion(output, target) + 0.1 * criterion_erl(output)
         elif args.method == 'L1':
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
-            norm_loss = 0.01*output.abs().sum(dim=1).mean()
+            norm_loss = 0.01 * output.abs().sum(dim=1).mean()
             loss = criterion(output, target) + norm_loss
         elif args.method == 'Mixup':
             input, target = input.cuda(), target.long().cuda()
@@ -179,7 +202,7 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
             rank_target_nonzero[rank_target_nonzero == 0] = 1
             rank_input2 = rank_input2 + rank_margin / rank_target_nonzero
 
-            ranking_loss = criterion_ranking(rank_input1,rank_input2,rank_target)
+            ranking_loss = criterion_ranking(rank_input1, rank_input2, rank_target)
             cls_loss = criterion(output, target)
             ranking_loss = args.rank_weight * ranking_loss
             loss = cls_loss + ranking_loss
