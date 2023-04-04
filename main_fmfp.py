@@ -58,6 +58,7 @@ parser.add_argument('--data_path', default='./data/', type=str, help='Dataset di
 parser.add_argument('--save_path', default='./output/flat/', type=str, help='Savefiles directory')
 parser.add_argument('--val_weight', default=0.25, type=float, help='Val loss weight')
 parser.add_argument('--gamma', default=0.1, type=float, help='CLS SCORE DECAY')
+parser.add_argument('--run', default='1', type=str, help='run version of the exp')
 parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
@@ -69,7 +70,7 @@ def main():
     cudnn.benchmark = True
     args.distributed = False
 
-    args.save_path = os.path.join(args.save_path, f'{args.data}_{args.model}_{args.method}_{args.val_weight}')
+    args.save_path = os.path.join(args.save_path, f'{args.data}_{args.model}_{args.method}_{args.val_weight}_run{args.run}')
     os.makedirs(args.save_path, exist_ok=True)
 
     wandb_logger = utils.init_wandb(args)
@@ -211,12 +212,14 @@ def main():
         model = swa_model.cuda()
     torch.save(model.state_dict(), os.path.join(args.save_path, 'avg_model.pth'))
 
-    acc, auroc, aupr_success, aupr, fpr, tnr, aurc, eaurc, ece, nll, brier = metrics.calc_metrics(args, test_loader,
-                                                                                                  test_label,
-                                                                                                  test_onehot,
-                                                                                                  model, cls_criterion)
+    scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
+
     # result write
-    result_logger.write([acc, auroc, aupr_success, aupr, fpr, tnr, aurc, eaurc, ece, nll, brier])
+    result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
+                                 scores['aupr'], scores['fpr'], scores['tnr'],
+                                 scores['aurc'], scores['eaurc'], scores['ece'],
+                                 scores['nll'], scores['bs']])
+    wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
 
 
 if __name__ == "__main__":

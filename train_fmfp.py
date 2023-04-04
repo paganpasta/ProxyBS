@@ -24,8 +24,7 @@ def train(loader, model, criterion, optimizer, epoch, logger, args):
         loss.backward()
         if args.method == 'sam' or args.method == 'fmfp':
             optimizer.first_step(zero_grad=True)
-            loss_again = criterion(model(input), target)
-            loss_again.backward()
+            criterion(model(input), target).backward()
             optimizer.second_step(zero_grad=True)
         else:
             optimizer.step()
