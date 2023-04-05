@@ -158,10 +158,6 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
             loss = criterion_bs(output, target)
-        elif args.method == 'PBS':
-            input, target = input.cuda(), target.long().cuda()
-            output = model(input)
-            loss = args.scale * criterion_pbs(output, target)
         elif args.method == 'ERL':
             input, target = input.cuda(), target.long().cuda()
             output = model(input)
@@ -221,5 +217,129 @@ def train(loader, model, criterion, criterion_ranking, optimizer, epoch, history
             history.correctness_update(idx, correct, output)
     if args.method == 'CRL':
         history.max_correctness_update(epoch)
+    logger.write([epoch, total_losses.avg, top1.avg])
+    return {'loss': total_losses.avg, 'acc': top1.avg}
+
+
+def train_with_flat(loader, model, criterion, optimizer, epoch, logger, args):
+    batch_time = utils.AverageMeter()
+    data_time = utils.AverageMeter()
+    total_losses = utils.AverageMeter()
+    top1 = utils.AverageMeter()
+    end = time.time()
+    focal_criterion = focal_loss(class_num=args.classnumber)
+    model.train()
+
+    for i, (input, target, idx) in enumerate(loader):
+        data_time.update(time.time() - end)
+        if 'BS' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = criterion_bs(output, target)
+            optimizer.zero_grad()
+            loss.backward()
+            if 'sam' in args.method or 'fmfp' in args.method:
+                optimizer.first_step(zero_grad=True)
+                output_again = model(input)
+                loss_again = criterion_bs(output_again, target)
+                loss_again.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
+        elif 'ERL' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = criterion(output, target) + 0.1 * criterion_erl(output)
+            optimizer.zero_grad()
+            loss.backward()
+            if 'sam' in args.method or 'fmfp' in args.method:
+                optimizer.first_step(zero_grad=True)
+                output_again = model(input)
+                loss_again = criterion(output_again, target) + 0.1 * criterion_erl(output_again)
+                loss_again.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
+        elif 'L1' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            norm_loss = 0.01 * output.abs().sum(dim=1).mean()
+            loss = criterion(output, target) + norm_loss
+            optimizer.zero_grad()
+            loss.backward()
+            if 'sam' in args.method or 'fmfp' in args.method:
+                optimizer.first_step(zero_grad=True)
+                output_again = model(input)
+                loss_again = criterion(output_again, target) + 0.01 * output_again.abs().sum(dim=1).mean()
+                loss_again.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
+        elif 'Mixup' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            input, target_a, target_b, lam = mixup_data(input, target)
+            output = model(input)
+            loss = mixup_criterion(criterion, output, target_a, target_b, lam)
+            optimizer.zero_grad()
+            loss.backward()
+            if 'sam' in args.method or 'fmfp' in args.method:
+                optimizer.first_step(zero_grad=True)
+                output_again = model(input)
+                loss_again = mixup_criterion(criterion, output_again, target_a, target_b, lam)
+                loss_again.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
+        elif 'LS' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            loss = criterion_ls(output, target)
+            optimizer.zero_grad()
+            loss.backward()
+            if 'sam' in args.method or 'fmfp' in args.method:
+                optimizer.first_step(zero_grad=True)
+                output_again = model(input)
+                loss_again = criterion_ls(output_again, target)
+                loss_again.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
+        elif 'focal' in args.method:
+            input, target = input.cuda(), target.long().cuda()
+            output = model(input)
+            if epoch < 10:
+                loss = criterion(output, target)
+                optimizer.zero_grad()
+                loss.backward()
+                if 'sam' in args.method or 'fmfp' in args.method:
+                    optimizer.first_step(zero_grad=True)
+                    output_again = model(input)
+                    loss_again = criterion(output_again, target)
+                    loss_again.backward()
+                    optimizer.second_step(zero_grad=True)
+                else:
+                    optimizer.step()
+            else:
+                loss = focal_criterion(output, target)
+                optimizer.zero_grad()
+                loss.backward()
+                if 'sam' in args.method or 'fmfp' in args.method:
+                    optimizer.first_step(zero_grad=True)
+                    output_again = model(input)
+                    loss_again = focal_criterion(output_again, target)
+                    loss_again.backward()
+                    optimizer.second_step(zero_grad=True)
+                else:
+                    optimizer.step()
+        else:
+            raise NotImplementedError(f'{args.method} is not supported for flat training!')
+
+        prec, correct = utils.accuracy(output, target)
+        total_losses.update(loss.item(), input.size(0))
+        top1.update(prec.item(), input.size(0))
+
+        batch_time.update(time.time() - end)
+        end = time.time()
+
     logger.write([epoch, total_losses.avg, top1.avg])
     return {'loss': total_losses.avg, 'acc': top1.avg}

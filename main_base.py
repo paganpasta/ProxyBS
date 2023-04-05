@@ -25,6 +25,10 @@ import train_base
 
 import wandb
 
+from torch.optim.swa_utils import AveragedModel, SWALR
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from utils.sam import SAM
+
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
@@ -56,13 +60,15 @@ parser.add_argument('--plot', default=20, type=int, help='')
 parser.add_argument('--data', default='cifar10', type=str, help='Dataset name to use [cifar10, cifar100]')
 parser.add_argument('--model', default='wrn28', type=str,
                     help='Models name to use [res110, dense, wrn, cmixer, efficientnet, mobilenet, vgg]')
-parser.add_argument('--method', default='Baseline', type=str, help='[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS, ERL]')
+parser.add_argument('--method', default='Baseline', type=str,
+                    help='sam/swa/fmfp+_+[Baseline, Mixup, LS, L1, focal, CRL, BS, PBS, ERL]')
 parser.add_argument('--data_path', default='./data/', type=str, help='Dataset directory')
 parser.add_argument('--cwd_weight', default=0.1, type=float, help='Trianing time tempscaling')
 parser.add_argument('--save_path', default='./output/', type=str, help='Savefiles directory')
 parser.add_argument('--rank_weight', default=1.0, type=float, help='Rank loss weight')
 parser.add_argument('--gpu', default='0', type=str, help='GPU id to use')
 parser.add_argument('--group', default='DEBUG', type=str, help='wandb group to log')
+parser.add_argument('--run', default='0', type=str, help='identifying different runs of same exp')
 parser.add_argument('--print-freq', '-p', default=200, type=int, metavar='N', help='print frequency (default: 10)')
 
 args = parser.parse_args()
@@ -73,7 +79,8 @@ def main():
     cudnn.benchmark = True
     args.distributed = False
 
-    args.save_path = os.path.join(args.save_path, args.data + '_' + args.model + '_' + args.method)
+    args.save_path = os.path.join(args.save_path,
+                                  f'{args.data}_{args.model}_{args.method}_run{args.run}')
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path, exist_ok=False)
 
@@ -132,6 +139,40 @@ def main():
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         scheduler = None
 
+    if 'sam' in args.method:
+        if args.model == "convmixer":
+            base_optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=custom_weight_decay)
+            optimizer = SAM(model.parameters(), base_optimizer)
+            scheduler = None
+        else:
+            base_optimizer = torch.optim.SGD
+            optimizer = SAM(model.parameters(), base_optimizer, lr=base_lr, momentum=custom_momentum,
+                            weight_decay=custom_weight_decay)
+            scheduler = MultiStepLR(optimizer, milestones=lr_strat, gamma=lr_factor)
+
+    elif 'swa' in args.method:
+        optimizer = torch.optim.SGD(model.parameters(), lr=base_lr, momentum=custom_momentum,
+                                    weight_decay=custom_weight_decay)
+        if args.model == "convmixer":
+            optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=custom_weight_decay)
+        swa_model = AveragedModel(model)
+        scheduler = CosineAnnealingLR(optimizer, T_max=100)
+        swa_start = 120
+        swa_scheduler = SWALR(optimizer, swa_lr=0.05)
+
+    elif 'fmfp' in args.method:
+        if args.model == "convmixer":
+            base_optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=custom_weight_decay)
+            optimizer = SAM(model.parameters(), base_optimizer)
+        else:
+            base_optimizer = torch.optim.SGD
+            optimizer = SAM(model.parameters(), base_optimizer, lr=base_lr, momentum=custom_momentum,
+                            weight_decay=custom_weight_decay)
+        swa_model = AveragedModel(model)
+        scheduler = CosineAnnealingLR(optimizer, T_max=100)
+        swa_start = 120
+        swa_scheduler = SWALR(optimizer, swa_lr=0.05)
+
     # make logger
     train_logger = utils.Logger(os.path.join(args.save_path, 'train.log'))
     result_logger = utils.Logger(os.path.join(args.save_path, 'result.log'))
@@ -141,15 +182,34 @@ def main():
 
     # start Train
     for epoch in range(1, args.epochs + 1):
-        training_metrics = train_base.train(train_loader,
-                                            model,
-                                            cls_criterion,
-                                            ranking_criterion,
-                                            optimizer,
-                                            epoch,
-                                            correctness_history,
-                                            train_logger,
-                                            args)
+        if 'sam' in args.method or 'swa' in args.method or 'fmfp' in args.method:
+            training_metrics = train_base.train_with_flat(train_loader,
+                                                          model,
+                                                          cls_criterion,
+                                                          optimizer,
+                                                          epoch,
+                                                          train_logger,
+                                                          args)
+        else:
+            training_metrics = train_base.train(train_loader,
+                                                model,
+                                                cls_criterion,
+                                                ranking_criterion,
+                                                optimizer,
+                                                epoch,
+                                                correctness_history,
+                                                train_logger,
+                                                args)
+        if 'swa' in args.method or 'fmfp' in args.method:
+            if scheduler is not None:
+                if epoch > swa_start:
+                    swa_model.update_parameters(model)
+                    swa_scheduler.step()
+                else:
+                    scheduler.step()
+        else:
+            if scheduler is not None:
+                scheduler.step()
 
         if epoch % 10 == 1:
             # calc measure
@@ -174,11 +234,23 @@ def main():
         else:
             wandb_logger.log({'train': training_metrics}, step=epoch)
 
-        if scheduler is not None:
-            scheduler.step()
-
     torch.save(model.state_dict(), os.path.join(args.save_path, 'last.pth'))
+
+    if 'swa' in args.method or 'fmfp' in args.method:
+        torch.optim.swa_utils.update_bn(train_loader, swa_model.cpu())
+        model = swa_model.cuda()
+        torch.save(model.state_dict(), os.path.join(args.save_path, 'avg_model.pth'))
+
+    scores = metrics.calc_metrics(args, test_loader, test_label, test_onehot, model, cls_criterion)
+
+    # result write
+    result_logger.write([scores['acc'], scores['auroc'], scores['aupr_s'],
+                         scores['aupr'], scores['fpr'], scores['tnr'],
+                         scores['aurc'], scores['eaurc'], scores['ece'],
+                         scores['nll'], scores['bs']])
+    wandb_logger.log({'val': scores, 'train': training_metrics}, step=epoch)
     wandb.finish()
+
 
 if __name__ == "__main__":
     main()
